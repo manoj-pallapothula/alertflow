@@ -218,5 +218,4 @@ Things I didn't fully appreciate before building this:
 
 ---
 
-## License
 
