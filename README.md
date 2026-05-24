@@ -266,12 +266,12 @@ StaticFiles was the clean fix — one endpoint, no separate server.
 
 ## What's Next
 
-- [x] Wire up real Slack notifications in `fire_notification()`
-- [x] Build a frontend dashboard — live at `/ui`
-- [ ] Add alert resolution endpoint — clear Redis fingerprint on resolve
-- [ ] Replace `asyncio.create_task()` with Celery for reliable delayed escalations
-- [ ] Add API key authentication on ingest endpoints
-- [ ] Write proper test coverage with pytest + FastAPI TestClient
+✅ Wire up real Slack notifications
+✅ Build a frontend dashboard
+✅ Add API key authentication
+✅ Add alert resolution endpoint
+⬜ Replace asyncio.create_task() with Celery
+⬜ Write pytest tests
 
 ---
 
