@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AlertFlow Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      min-height: 100vh;
+    }
+
+    /* ── HEADER ── */
+    .header {
+      background: #0f2044;
+      border-bottom: 2px solid #1a56db;
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .header-left { display: flex; align-items: center; gap: 12px; }
+    .header h1 { font-size: 20px; font-weight: 700; color: #fff; }
+    .header p { font-size: 13px; color: #8b949e; }
+    .status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #10b981;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .last-updated {
+      font-size: 12px;
+      color: #8b949e;
+    }
+
+    /* ── LAYOUT ── */
+    .container { padding: 24px 32px; max-width: 1400px; margin: 0 auto; }
+
+    /* ── STAT CARDS ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+    }
+    .stat-card.total::before   { background: #1a56db; }
+    .stat-card.routed::before  { background: #10b981; }
+    .stat-card.deduped::before { background: #f59e0b; }
+    .stat-card.resolved::before{ background: #8b949e; }
+
+    .stat-label {
+      font-size: 12px;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .stat-value {
+      font-size: 36px;
+      font-weight: 700;
+      color: #e6edf3;
+      line-height: 1;
+    }
+    .stat-sub {
+      font-size: 12px;
+      color: #8b949e;
+      margin-top: 6px;
+    }
+
+    /* ── SECOND ROW ── */
+    .second-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 20px;
+    }
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #e6edf3;
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #30363d;
+    }
+
+    /* ── SEVERITY BARS ── */
+    .sev-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .sev-label {
+      font-size: 12px;
+      font-weight: 700;
+      width: 40px;
+      flex-shrink: 0;
+    }
+    .sev-bar-track {
+      flex: 1;
+      height: 8px;
+      background: #21262d;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .sev-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.5s ease;
+    }
+    .sev-count {
+      font-size: 12px;
+      color: #8b949e;
+      width: 30px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+    .sev1 { color: #e02020; }
+    .sev1-fill { background: #e02020; }
+    .sev2 { color: #f59e0b; }
+    .sev2-fill { background: #f59e0b; }
+    .sev3 { color: #1a56db; }
+    .sev3-fill { background: #1a56db; }
+    .sev4 { color: #10b981; }
+    .sev4-fill { background: #10b981; }
+
+    /* ── SERVICE LIST ── */
+    .service-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid #21262d;
+    }
+    .service-row:last-child { border-bottom: none; }
+    .service-name {
+      font-size: 13px;
+      color: #e6edf3;
+      font-family: monospace;
+    }
+    .service-count {
+      font-size: 12px;
+      font-weight: 700;
+      color: #1a56db;
+      background: #1a56db22;
+      padding: 2px 8px;
+      border-radius: 12px;
+    }
+
+    /* ── ALERTS TABLE ── */
+    .table-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+    .table-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #30363d;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .table-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #e6edf3;
+    }
+    .filter-row {
+      display: flex;
+      gap: 8px;
+    }
+    .filter-btn {
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      border: 1px solid #30363d;
+      background: transparent;
+      color: #8b949e;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .filter-btn:hover, .filter-btn.active {
+      background: #1a56db;
+      border-color: #1a56db;
+      color: #fff;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th {
+      font-size: 11px;
+      font-weight: 600;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 10px 20px;
+      text-align: left;
+      background: #0d1117;
+      border-bottom: 1px solid #30363d;
+    }
+    td {
+      font-size: 13px;
+      padding: 12px 20px;
+      border-bottom: 1px solid #21262d;
+      color: #e6edf3;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #1c2128; }
+
+    /* ── BADGES ── */
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .badge-sev1 { background: #e0202022; color: #e02020; border: 1px solid #e0202044; }
+    .badge-sev2 { background: #f59e0b22; color: #f59e0b; border: 1px solid #f59e0b44; }
+    .badge-sev3 { background: #1a56db22; color: #60a5fa; border: 1px solid #1a56db44; }
+    .badge-sev4 { background: #10b98122; color: #10b981; border: 1px solid #10b98144; }
+
+    .status-badge {
+      display: inline-block;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .status-routed      { background: #10b98122; color: #10b981; }
+    .status-active      { background: #1a56db22; color: #60a5fa; }
+    .status-deduplicated{ background: #f59e0b22; color: #f59e0b; }
+    .status-resolved    { background: #8b949e22; color: #8b949e; }
+
+    /* ── DEDUP WINDOW ── */
+    .dedup-box {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .dedup-label { font-size: 13px; color: #8b949e; }
+    .dedup-value { font-size: 20px; font-weight: 700; color: #f59e0b; }
+
+    /* ── EMPTY STATE ── */
+    .empty {
+      text-align: center;
+      padding: 40px;
+      color: #8b949e;
+      font-size: 13px;
+    }
+
+    /* ── ERROR STATE ── */
+    .error-banner {
+      background: #e0202022;
+      border: 1px solid #e0202044;
+      border-radius: 8px;
+      padding: 12px 20px;
+      color: #e02020;
+      font-size: 13px;
+      margin-bottom: 16px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="header-left">
+      <div class="status-dot" id="statusDot"></div>
+      <div>
+        <h1>AlertFlow</h1>
+        <p>Intelligent Alert Routing Engine</p>
+      </div>
+    </div>
+    <div class="last-updated" id="lastUpdated">Loading...</div>
+  </div>
+
+  <div class="container">
+
+    <div class="error-banner" id="errorBanner">
+      Cannot reach AlertFlow API — make sure uvicorn is running on port 8000.
+    </div>
+
+    <!-- Stat Cards -->
+    <div class="stats-grid">
+      <div class="stat-card total">
+        <div class="stat-label">Total Alerts</div>
+        <div class="stat-value" id="statTotal">—</div>
+        <div class="stat-sub">all time</div>
+      </div>
+      <div class="stat-card routed">
+        <div class="stat-label">Routed</div>
+        <div class="stat-value" id="statRouted">—</div>
+        <div class="stat-sub">sent to a team</div>
+      </div>
+      <div class="stat-card deduped">
+        <div class="stat-label">Deduplicated</div>
+        <div class="stat-value" id="statDeduped">—</div>
+        <div class="stat-sub">duplicates skipped</div>
+      </div>
+      <div class="stat-card resolved">
+        <div class="stat-label">Active Dedup Windows</div>
+        <div class="stat-value" id="statWindows">—</div>
+        <div class="stat-sub" id="statWindowSub">in Redis right now</div>
+      </div>
+    </div>
+
+    <!-- Severity + Services -->
+    <div class="second-row">
+      <div class="card">
+        <div class="card-title">Alerts by Severity</div>
+        <div id="severityBars">
+          <div class="empty">Loading...</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Noisiest Services</div>
+        <div id="serviceList">
+          <div class="empty">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Alerts Table -->
+    <div class="table-card">
+      <div class="table-header">
+        <div class="table-title">Recent Alerts</div>
+        <div class="filter-row">
+          <button class="filter-btn active" onclick="filterAlerts('all', this)">All</button>
+          <button class="filter-btn" onclick="filterAlerts('routed', this)">Routed</button>
+          <button class="filter-btn" onclick="filterAlerts('deduplicated', this)">Deduped</button>
+          <button class="filter-btn" onclick="filterAlerts('active', this)">Active</button>
+        </div>
+      </div>
+      <div id="alertsTable">
+        <div class="empty">Loading...</div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const API = 'http://localhost:8000';
+    let currentFilter = 'all';
+    let allAlerts = [];
+
+    // ── FETCH SUMMARY ────────────────────────────────────────────────────────
+    async function fetchSummary() {
+      const res = await fetch(`${API}/dashboard/summary`);
+      const data = await res.json();
+
+      document.getElementById('statTotal').textContent = data.total_alerts;
+      document.getElementById('statRouted').textContent = data.by_status.routed;
+      document.getElementById('statDeduped').textContent = data.by_status.deduplicated;
+      document.getElementById('statWindows').textContent = data.dedup.active_dedup_windows;
+
+      renderSeverityBars(data.by_severity, data.total_alerts);
+      renderServiceList(data.by_service);
+    }
+
+    // ── SEVERITY BARS ────────────────────────────────────────────────────────
+    function renderSeverityBars(bySeverity, total) {
+      const sevs = [
+        { key: 'SEV1', cls: 'sev1', fill: 'sev1-fill', emoji: '🔴' },
+        { key: 'SEV2', cls: 'sev2', fill: 'sev2-fill', emoji: '🟡' },
+        { key: 'SEV3', cls: 'sev3', fill: 'sev3-fill', emoji: '🔵' },
+        { key: 'SEV4', cls: 'sev4', fill: 'sev4-fill', emoji: '🟢' },
+      ];
+
+      const max = Math.max(...Object.values(bySeverity), 1);
+
+      document.getElementById('severityBars').innerHTML = sevs.map(s => {
+        const count = bySeverity[s.key] || 0;
+        const pct = Math.round((count / max) * 100);
+        return `
+          <div class="sev-row">
+            <div class="sev-label ${s.cls}">${s.key}</div>
+            <div class="sev-bar-track">
+              <div class="sev-bar-fill ${s.fill}" style="width:${pct}%"></div>
+            </div>
+            <div class="sev-count">${count}</div>
+          </div>`;
+      }).join('');
+    }
+
+    // ── SERVICE LIST ─────────────────────────────────────────────────────────
+    function renderServiceList(byService) {
+      const entries = Object.entries(byService);
+      if (entries.length === 0) {
+        document.getElementById('serviceList').innerHTML =
+          '<div class="empty">No alerts yet</div>';
+        return;
+      }
+      document.getElementById('serviceList').innerHTML = entries
+        .slice(0, 8)
+        .map(([name, count]) => `
+          <div class="service-row">
+            <span class="service-name">${name}</span>
+            <span class="service-count">${count}</span>
+          </div>`)
+        .join('');
+    }
+
+    // ── FETCH ALERTS ─────────────────────────────────────────────────────────
+    async function fetchAlerts() {
+      const res = await fetch(`${API}/dashboard/alerts?limit=50`);
+      const data = await res.json();
+      allAlerts = data.alerts;
+      renderAlertsTable(allAlerts);
+    }
+
+    // ── RENDER TABLE ─────────────────────────────────────────────────────────
+    function renderAlertsTable(alerts) {
+      const filtered = currentFilter === 'all'
+        ? alerts
+        : alerts.filter(a => a.status === currentFilter);
+
+      if (filtered.length === 0) {
+        document.getElementById('alertsTable').innerHTML =
+          '<div class="empty">No alerts found</div>';
+        return;
+      }
+
+      const rows = filtered.map(a => {
+        const time = new Date(a.created_at).toLocaleTimeString();
+        const date = new Date(a.created_at).toLocaleDateString();
+        return `
+          <tr>
+            <td><span class="badge badge-${a.severity.toLowerCase()}">${a.severity}</span></td>
+            <td>${a.service}</td>
+            <td>${a.title}</td>
+            <td>${a.team || '—'}</td>
+            <td>${a.routed_to || '—'}</td>
+            <td><span class="status-badge status-${a.status}">${a.status}</span></td>
+            <td style="color:#8b949e;font-size:12px">${date} ${time}</td>
+          </tr>`;
+      }).join('');
+
+      document.getElementById('alertsTable').innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Severity</th>
+              <th>Service</th>
+              <th>Title</th>
+              <th>Team</th>
+              <th>Routed To</th>
+              <th>Status</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    // ── FILTER ───────────────────────────────────────────────────────────────
+    function filterAlerts(filter, btn) {
+      currentFilter = filter;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderAlertsTable(allAlerts);
+    }
+
+    // ── REFRESH LOOP ─────────────────────────────────────────────────────────
+    async function refresh() {
+      const dot = document.getElementById('statusDot');
+      const error = document.getElementById('errorBanner');
+
+      try {
+        await Promise.all([fetchSummary(), fetchAlerts()]);
+        dot.style.background = '#10b981';
+        error.style.display = 'none';
+        document.getElementById('lastUpdated').textContent =
+          'Last updated: ' + new Date().toLocaleTimeString();
+      } catch (e) {
+        dot.style.background = '#e02020';
+        error.style.display = 'block';
+        document.getElementById('lastUpdated').textContent = 'API unreachable';
+      }
+    }
+
+    // Start immediately then refresh every 30 seconds
+    refresh();
+    setInterval(refresh, 30000);
+  </script>
+
+</body>
+</html>
