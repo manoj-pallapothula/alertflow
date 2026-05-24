@@ -1,33 +1,49 @@
 import asyncio
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.models.alert import Alert, Severity
 from app.models.policy import EscalationPolicy
+from app.config import settings
 
 
-# Default policies used when no policy is configured in the database
 DEFAULT_POLICIES = {
     "SEV1": {
         "wait_seconds": 0,
-        "channel": "pagerduty",
-        "target": "oncall-primary",
+        "channel": "slack",
+        "target": "#alerts",
     },
     "SEV2": {
-        "wait_seconds": 300,      # 5 minutes
+        "wait_seconds": 300,
         "channel": "slack",
-        "target": "#alerts-sev2",
+        "target": "#alerts",
     },
     "SEV3": {
-        "wait_seconds": 900,      # 15 minutes
+        "wait_seconds": 900,
         "channel": "slack",
-        "target": "#alerts-sev3",
+        "target": "#alerts",
     },
     "SEV4": {
         "wait_seconds": 0,
-        "channel": "email",
-        "target": "alerts@yourcompany.com",
+        "channel": "slack",
+        "target": "#alerts",
     },
+}
+
+# Color per severity — shows as left border on Slack message
+SEV_COLORS = {
+    "SEV1": "#E02020",   # red
+    "SEV2": "#F59E0B",   # amber
+    "SEV3": "#1A56DB",   # blue
+    "SEV4": "#10B981",   # green
+}
+
+SEV_EMOJI = {
+    "SEV1": "🔴",
+    "SEV2": "🟡",
+    "SEV3": "🔵",
+    "SEV4": "🟢",
 }
 
 
@@ -36,14 +52,8 @@ async def schedule_escalation(
     policy_id: str | None,
     db: AsyncSession
 ):
-    """
-    Look up the escalation policy and fire or schedule the notification.
-    If no policy_id is given, falls back to DEFAULT_POLICIES based on severity.
-    """
-
     policy = None
 
-    # Try to load a custom policy from the database
     if policy_id:
         result = await db.execute(
             select(EscalationPolicy).where(
@@ -52,24 +62,22 @@ async def schedule_escalation(
         )
         policy = result.scalar_one_or_none()
 
-    # Use custom policy if found, otherwise fall back to defaults
     if policy:
         wait = policy.wait_seconds
         channel = policy.notify_channel
         target = policy.notify_target
     else:
-        severity_key = alert.severity.value
-        defaults = DEFAULT_POLICIES.get(severity_key, DEFAULT_POLICIES["SEV3"])
+        defaults = DEFAULT_POLICIES.get(
+            alert.severity.value,
+            DEFAULT_POLICIES["SEV3"]
+        )
         wait = defaults["wait_seconds"]
         channel = defaults["channel"]
         target = defaults["target"]
 
     if wait == 0:
-        # Notify immediately — don't block the request
         await fire_notification(alert, channel, target)
     else:
-        # Schedule notification in the background
-        # asyncio.create_task runs it without blocking the current request
         asyncio.create_task(
             delayed_notification(alert, channel, target, wait)
         )
@@ -81,37 +89,70 @@ async def delayed_notification(
     target: str,
     wait_seconds: int
 ):
-    """
-    Wait for the specified time then fire the notification.
-    Runs in the background — the original request has already returned.
-    """
     print(f"[ESCALATION] Waiting {wait_seconds}s before notifying "
-          f"for {alert.severity.value} alert: {alert.title}")
-
+          f"for {alert.severity.value}: {alert.title}")
     await asyncio.sleep(wait_seconds)
-
-    # Check if alert was resolved during the wait period
-    # (In a production system you'd re-query the DB here)
     await fire_notification(alert, channel, target)
 
 
 async def fire_notification(alert: Alert, channel: str, target: str):
     """
-    Send the actual notification.
-    Currently prints to terminal — replace with real integrations later.
-
-    TODO: Replace with:
-    - Slack: POST to webhook URL
-    - PagerDuty: POST to Events API v2
-    - Email: send via SMTP or SendGrid
+    Send alert notification to Slack.
+    Falls back to terminal print if no webhook URL is configured.
     """
-    print(
-        f"\n[NOTIFY] {'='*50}\n"
-        f"  Channel  : {channel}\n"
-        f"  Target   : {target}\n"
-        f"  Severity : {alert.severity.value}\n"
-        f"  Service  : {alert.service}\n"
-        f"  Title    : {alert.title}\n"
-        f"  Alert ID : {alert.id}\n"
-        f"{'='*52}\n"
-    )
+    if not settings.slack_webhook_url:
+        # Fallback — print to terminal if no webhook configured
+        print(
+            f"\n[NOTIFY] {channel} → {target}\n"
+            f"  {alert.severity.value} | {alert.service} | {alert.title}\n"
+        )
+        return
+
+    emoji = SEV_EMOJI.get(alert.severity.value, "⚪")
+    color = SEV_COLORS.get(alert.severity.value, "#888888")
+
+    # Build Slack message with attachment for colored sidebar
+    payload = {
+        "blocks": [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"{emoji} {alert.severity.value} — {alert.title}",
+                }
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Service*\n{alert.service}"},
+                    {"type": "mrkdwn", "text": f"*Team*\n{alert.team or 'unassigned'}"},
+                    {"type": "mrkdwn", "text": f"*Routed To*\n{alert.routed_to or 'default-oncall'}"},
+                    {"type": "mrkdwn", "text": f"*Source*\n{alert.source}"},
+                ]
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Alert ID:* `{alert.id}`"
+                }
+            },
+            {
+                "type": "divider"
+            }
+        ]
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                settings.slack_webhook_url,
+                json=payload,
+                timeout=10.0,
+            )
+            if response.status_code == 200:
+                print(f"[SLACK] ✅ Notification sent for {alert.severity.value}: {alert.title}")
+            else:
+                print(f"[SLACK] ❌ Failed — status {response.status_code}: {response.text}")
+
+    except Exception as e:
+        print(f"[SLACK] ❌ Error sending notification: {e}")
