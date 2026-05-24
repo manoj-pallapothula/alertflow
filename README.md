@@ -271,7 +271,7 @@ StaticFiles was the clean fix — one endpoint, no separate server.
 ✅ Add API key authentication
 ✅ Add alert resolution endpoint
 ⬜ Replace asyncio.create_task() with Celery
-⬜ Write pytest tests
+✅ Write pytest tests
 
 ---
 
