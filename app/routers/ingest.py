@@ -11,6 +11,7 @@ from app.models.alert import (
 )
 from app.services.dedup import check_and_mark_duplicate
 from app.services.routing import route_alert
+from app.security import verify_api_key
 
 router = APIRouter(prefix="/ingest", tags=["Ingestion"])
 
@@ -149,7 +150,8 @@ async def process_alert(alert_data: AlertCreate, db: AsyncSession) -> Alert:
 @router.post("/prometheus")
 async def ingest_prometheus(
     webhook: PrometheusWebhook,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(verify_api_key)
 ):
     """
     Accepts Prometheus Alertmanager webhook format.
@@ -182,7 +184,8 @@ async def ingest_prometheus(
 @router.post("/pagerduty")
 async def ingest_pagerduty(
     pd: PagerDutyAlert,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(verify_api_key)
 ):
     """
     Accepts PagerDuty Events API v2 webhook format.

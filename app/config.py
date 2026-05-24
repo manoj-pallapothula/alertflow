@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     dedup_window_seconds: int = 300
     app_env: str = "development"
     slack_webhook_url: Optional[str] = None
+    api_key: Optional[str] = None
 
     class Config:
         env_file = ".env"
