@@ -2,22 +2,24 @@
 
 I built this because alert fatigue is a real problem. Same alert firing 50 times, going to the wrong person, at 3am. AlertFlow sits between your monitoring tools and your engineers — it deduplicates, routes, and escalates so the right person gets paged once, not 47 times.
 
----
-
 ## Why I Built This
 
-Most monitoring setups have the same issues:
+Alert fatigue is a real thing. I've seen setups where the same alert fires 60 times 
+because Prometheus retries every 30 seconds. By the time someone looks at it, 
+there's a wall of identical notifications and nobody knows which one to act on.
 
-- Prometheus re-sends every 30 seconds until the issue resolves — your engineer gets 60 pages for one problem
-- Alerts go to a general channel instead of the team that owns the service
-- A low severity disk warning wakes someone up at 3am the same way a database outage does
-- No visibility into how many alerts are actually firing vs being swallowed
+The other problem is routing. Most teams have one big #alerts channel that 
+everything goes into. A disk warning from a dev box and a production database 
+outage look identical at 3am.
 
-AlertFlow is my attempt to fix all four with a single service that sits in front of your alerting stack.
+I wanted something simple that sits in the middle — catches duplicates, 
+figures out who actually owns the problem, and only wakes someone up 
+if it's worth waking them up.
 
 ---
 
 ## How It Works — Pipeline Overview
+
 Prometheus or PagerDuty sends a webhook
 ↓
 Normalize → convert to internal format (AlertCreate)
@@ -32,7 +34,14 @@ Routing engine → loop rules in priority order, first match wins
 ↓
 Escalation → fire or schedule notification based on severity
 ↓
-Dashboard API → live counts available at /dashboard/summary
+Slack → formatted message with severity, service, team, routed_to
+↓
+Dashboard → live counts and alert list at /ui
+
+Two sources go in. One normalized pipeline handles both. The source stops mattering after normalization.
+
+---
+
 Two sources go in. One normalized pipeline handles both. The source stops mattering after normalization.
 
 ---
@@ -56,6 +65,7 @@ I chose Redis over a database-based approach because it's in-memory (sub-millise
 ### Routing with Priority-Ordered Rules
 
 Rules are stored in PostgreSQL and checked in priority order. First match wins. Each rule can match on severity, service name, team, or any combination — leave a field blank and it matches anything.
+
 Priority 10  — SEV1 → platform-oncall        (checked first)
 Priority 20  — payments service → payments-team
 Priority 30  — infra team → infra-oncall
@@ -65,12 +75,36 @@ Adding a new rule is a database insert. No code changes, no deploys.
 
 ### Escalation by Severity
 
-SEV1 → PagerDuty, 0 second wait   (wake someone up)
-SEV2 → Slack, 5 minute wait       (might self-resolve)
-SEV3 → Slack, 15 minute wait      (check in the morning)
-SEV4 → Email, 0 second wait       (just log it)
+SEV1 → Slack, 0 second wait    (page immediately)
+SEV2 → Slack, 5 minute wait    (might self-resolve)
+SEV3 → Slack, 15 minute wait   (check in the morning)
+SEV4 → Slack, 0 second wait    (just log it)
 
 Delayed notifications use `asyncio.create_task()` — the webhook response returns immediately and the notification fires in the background after the wait period.
+
+### Slack Notifications
+
+Real notifications via Slack incoming webhook. Uses Block Kit format:
+
+🔴 SEV1 — Checkout service failing
+Service          Team
+checkout         payments
+Routed To        Source
+platform-oncall  prometheus
+Alert ID: 453aa46c-efa2-4cbf-aba6-dd7b6f26c4c2
+
+Falls back to terminal print if `SLACK_WEBHOOK_URL` is not set.
+
+### Frontend Dashboard
+
+Single HTML file served at `/ui`. No React, no build tools — just HTML, CSS, and vanilla JS talking directly to the API.
+
+- Live stat cards — total, routed, deduplicated, active dedup windows
+- Severity bars with color indicators (red/amber/blue/green)
+- Noisiest services list
+- Recent alerts table with filter buttons (All / Routed / Deduped / Active)
+- Auto-refreshes every 30 seconds
+- Green pulsing dot shows live API connection
 
 ---
 
@@ -80,19 +114,18 @@ Tested end-to-end with real webhook payloads:
 
 | Test | Input | Result |
 |------|-------|--------|
-| SEV1 postgres alert | critical severity, job=postgres | routed to platform-oncall via priority 10 rule |
-| payments warning | warning severity, job=payments | routed to payments-team via priority 20 rule |
+| SEV1 postgres alert | critical severity, job=postgres | routed to platform-oncall, Slack notified |
+| payments warning | warning severity, job=payments | routed to payments-team, Slack notified |
 | Same alert again | identical labels as above | deduplicated=true, routing skipped |
-| PagerDuty disk alert | warning via PagerDuty webhook | routed to default-oncall via catch-all rule |
+| PagerDuty disk alert | warning via PagerDuty webhook | routed to default-oncall via catch-all |
 
-Dashboard after 4 tests:
-
+Dashboard after testing:
 ```json
 {
-  "total_alerts": 4,
-  "by_status": { "routed": 3, "deduplicated": 1 },
-  "by_severity": { "SEV1": 1, "SEV2": 2, "SEV3": 1 },
-  "active_dedup_windows": 3
+  "total_alerts": 11,
+  "by_status": { "routed": 9, "deduplicated": 2 },
+  "by_severity": { "SEV1": 8, "SEV2": 2, "SEV3": 1 },
+  "active_dedup_windows": 0
 }
 ```
 
@@ -112,7 +145,7 @@ Dashboard after 4 tests:
 Being honest about the limitations:
 
 - **No persistent escalation** — delayed notifications use `asyncio.create_task()` which dies if the process restarts. A Celery worker with Redis as broker would fix this.
-- **No alert resolution flow** — when Prometheus sends `endsAt`, AlertFlow doesn't currently mark alerts resolved or clear the Redis fingerprint. Same alert firing again after resolving might get deduplicated incorrectly.
+- **No alert resolution flow** — when Prometheus sends `endsAt`, AlertFlow doesn't currently mark alerts resolved or clear the Redis fingerprint.
 - **No auth on ingest endpoints** — anyone who can reach the server can POST alerts. Needs an API key check before going anywhere near production.
 - **Single process** — no horizontal scaling story yet. One instance, one event loop.
 
@@ -133,11 +166,12 @@ Being honest about the limitations:
 | uvicorn | — | ASGI server |
 | Slack | — | Real-time alert notifications via incoming webhook |
 
+---
 
 ## Project Structure
 
 app/
-├── main.py               FastAPI app + router registration
+├── main.py               FastAPI app + router registration + static files
 ├── config.py             pydantic-settings reads .env
 ├── models/
 │   ├── alert.py          Alert table + enums + Pydantic schemas
@@ -148,10 +182,12 @@ app/
 ├── services/
 │   ├── dedup.py          Redis SET NX deduplication
 │   ├── routing.py        Priority rule matching engine
-│   └── escalation.py     Severity-based notification scheduler
+│   └── escalation.py     Severity-based notification + real Slack webhook
 └── db/
 ├── database.py       Async engine + session factory
 └── migrations/       Alembic migration files
+static/
+└── dashboard.html        Frontend dashboard — served at /ui
 
 ---
 
@@ -176,7 +212,20 @@ python3 seed.py
 uvicorn app.main:app --reload
 ```
 
-API docs at **http://localhost:8000/docs**
+- API docs at **http://localhost:8000/docs**
+- Live dashboard at **http://localhost:8000/ui**
+
+---
+
+## Environment Variables
+
+```bash
+DATABASE_URL=postgresql+asyncpg://alertflow:alertflow@localhost:5433/alertflow
+REDIS_URL=redis://localhost:6379
+DEDUP_WINDOW_SECONDS=300
+APP_ENV=development
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+```
 
 ---
 
@@ -187,35 +236,45 @@ POST /ingest/pagerduty           PagerDuty Events API v2 webhook
 GET  /dashboard/summary          Counts by status, severity, service + Redis stats
 GET  /dashboard/alerts           Alert list — filter by status/severity/service/team
 GET  /dashboard/alerts/{id}      Full alert details including raw labels
+GET  /ui                         Frontend dashboard
 GET  /docs                       Interactive Swagger UI
 
 ---
 
-## Learning Outcomes
+## Things I Learned Building This
 
-Things I didn't fully appreciate before building this:
+**Redis SET NX saved me from overengineering.** My first instinct was to build 
+a dedup check using PostgreSQL with a timestamp query. Then I remembered SET NX 
+exists — one atomic command, built-in expiry, nothing to clean up. 
+Took 10 lines of code instead of 50.
 
-**Redis SET NX is underrated.** Most deduplication implementations I'd seen before used a read-then-write pattern with locks. SET NX does it in one atomic operation. No locks, no race conditions, TTL handled automatically.
+**Async SQLAlchemy has sharp edges.** The greenlet dependency, asyncpg vs psycopg2 
+for migrations vs runtime, session lifecycle in FastAPI dependencies — none of 
+this is obvious from the docs. Got bitten by all three.
 
-**Async SQLAlchemy takes some getting used to.** The session management is different from the sync version. `get_db()` as a FastAPI dependency makes it clean once you understand the pattern, but the initial setup has a few gotchas — asyncpg, greenlet, engine configuration.
+**Alembic from the start is worth it.** I almost skipped migrations and just used 
+create_all(). Glad I didn't. When I needed to check if tables existed, 
+I had a proper history instead of guessing.
 
-**Schema migrations from day one.** I set up Alembic before writing any application code. Every schema change went through a migration file. When I needed to verify the tables existed, I could check the migration history instead of guessing.
+**Slack silently dropped the attachments format.** Terminal said the webhook 
+returned 200. Nothing showed up in Slack. Spent 20 minutes debugging before 
+realizing modern Slack ignores legacy attachments entirely. Block Kit only.
 
-**Separation of concerns pays off early.** Keeping normalization, deduplication, routing, and escalation in separate files made debugging straightforward. When something broke, I knew exactly which file to look at.
-
-**Port conflicts happen.** PostgreSQL defaulted to 5432 which was already in use on my machine. Docker made it a one-line fix in docker-compose.yml. Without containers that would have been a messy install conflict.
-
----
+**CORS bites you when you open HTML files directly.** Browser blocks fetch() 
+calls to localhost from a file:// URL. Serving the dashboard through FastAPI's 
+StaticFiles was the clean fix — one endpoint, no separate server.
 
 ## What's Next
 
 - [x] Wire up real Slack notifications in `fire_notification()`
+- [x] Build a frontend dashboard — live at `/ui`
 - [ ] Add alert resolution endpoint — clear Redis fingerprint on resolve
 - [ ] Replace `asyncio.create_task()` with Celery for reliable delayed escalations
 - [ ] Add API key authentication on ingest endpoints
-- [ ] Build a frontend dashboard — the API is ready, just needs a UI
 - [ ] Write proper test coverage with pytest + FastAPI TestClient
 
 ---
 
+## License
 
+MIT
