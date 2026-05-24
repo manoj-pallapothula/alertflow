@@ -10,8 +10,7 @@ class Settings(BaseSettings):
     slack_webhook_url: Optional[str] = None
     api_key: Optional[str] = None
 
-    class Config:
-        env_file = ".env"
+    model_config = {"env_file": ".env"}
 
 
 settings = Settings()
