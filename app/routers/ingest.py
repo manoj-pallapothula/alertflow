@@ -1,8 +1,11 @@
 import hashlib
 import json
+from datetime import datetime, timezone
+
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.db.database import get_db
 from app.models.alert import (
@@ -209,3 +212,75 @@ async def ingest_pagerduty(
 async def ingest_health():
     """Quick check that the ingestion service is up."""
     return {"status": "ok", "service": "ingest"}
+
+@router.post("/prometheus/resolve")
+async def resolve_prometheus(
+    webhook: PrometheusWebhook,
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(verify_api_key)
+):
+    """
+    Handles Prometheus resolved alerts.
+    Marks alerts as resolved in PostgreSQL and clears Redis fingerprint.
+    """
+    resolved = []
+    not_found = []
+
+    for pa in webhook.alerts:
+        # Only process alerts that have actually resolved
+        if not pa.endsAt:
+            continue
+
+        # Parse endsAt — Prometheus sends it as ISO string
+        try:
+            ends_at = datetime.fromisoformat(
+                pa.endsAt.replace("Z", "+00:00")
+            )
+        except ValueError:
+            continue
+
+        # Skip if endsAt is in the future — not resolved yet
+        if ends_at > datetime.now(timezone.utc):
+            continue
+
+        labels = pa.labels
+
+        # Build same fingerprint as ingestion
+        fingerprint = hashlib.md5(
+            json.dumps(labels, sort_keys=True).encode()
+        ).hexdigest()
+
+        # Find the most recent active alert with this fingerprint
+        result = await db.execute(
+            select(Alert)
+            .where(Alert.fingerprint == fingerprint)
+            .where(Alert.status != AlertStatus.RESOLVED)
+            .order_by(Alert.created_at.desc())
+            .limit(1)
+        )
+        alert = result.scalar_one_or_none()
+
+        if alert:
+            # Mark resolved in PostgreSQL
+            alert.status = AlertStatus.RESOLVED
+            alert.resolved_at = datetime.utcnow()
+            await db.commit()
+
+            # Clear Redis fingerprint immediately
+            await clear_fingerprint(fingerprint)
+
+            resolved.append({
+                "id": str(alert.id),
+                "fingerprint": fingerprint,
+                "service": alert.service,
+                "title": alert.title,
+                "resolved_at": alert.resolved_at.isoformat(),
+            })
+        else:
+            not_found.append(fingerprint)
+
+    return {
+        "resolved": len(resolved),
+        "not_found": len(not_found),
+        "alerts": resolved,
+    }
