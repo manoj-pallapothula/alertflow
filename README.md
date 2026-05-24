@@ -114,7 +114,6 @@ Being honest about the limitations:
 - **No persistent escalation** — delayed notifications use `asyncio.create_task()` which dies if the process restarts. A Celery worker with Redis as broker would fix this.
 - **No alert resolution flow** — when Prometheus sends `endsAt`, AlertFlow doesn't currently mark alerts resolved or clear the Redis fingerprint. Same alert firing again after resolving might get deduplicated incorrectly.
 - **No auth on ingest endpoints** — anyone who can reach the server can POST alerts. Needs an API key check before going anywhere near production.
-- **Notifications are stubbed** — `fire_notification()` prints to terminal. Real Slack/PagerDuty calls need to be wired in.
 - **Single process** — no horizontal scaling story yet. One instance, one event loop.
 
 ---
@@ -132,6 +131,7 @@ Being honest about the limitations:
 | Pydantic | v2 | Request validation + settings |
 | Docker | — | Local Redis + PostgreSQL |
 | uvicorn | — | ASGI server |
+| Slack | — | Real-time alert notifications via incoming webhook |
 
 
 ## Project Structure
@@ -209,7 +209,7 @@ Things I didn't fully appreciate before building this:
 
 ## What's Next
 
-- [ ] Wire up real Slack notifications in `fire_notification()`
+- [x] Wire up real Slack notifications in `fire_notification()`
 - [ ] Add alert resolution endpoint — clear Redis fingerprint on resolve
 - [ ] Replace `asyncio.create_task()` with Celery for reliable delayed escalations
 - [ ] Add API key authentication on ingest endpoints
