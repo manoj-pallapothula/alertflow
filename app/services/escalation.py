@@ -75,6 +75,15 @@ async def schedule_escalation(
         channel = defaults["channel"]
         target = defaults["target"]
 
+    # Record escalation event
+    from app.services import timeline as tl
+    from app.db.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as tl_db:
+        await tl.record_escalated(
+            tl_db, alert.id,
+            alert.severity.value, wait, channel
+        )
+
     if wait == 0:
         await fire_notification(alert, channel, target)
     else:
@@ -151,6 +160,10 @@ async def fire_notification(alert: Alert, channel: str, target: str):
             )
             if response.status_code == 200:
                 print(f"[SLACK] ✅ Notification sent for {alert.severity.value}: {alert.title}")
+                from app.services import timeline as tl
+                from app.db.database import AsyncSessionLocal
+                async with AsyncSessionLocal() as tl_db:
+                    await tl.record_notified(tl_db, alert.id, channel, target)
             else:
                 print(f"[SLACK] ❌ Failed — status {response.status_code}: {response.text}")
 

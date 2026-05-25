@@ -2,7 +2,6 @@ import hashlib
 import json
 from datetime import datetime, timezone
 
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -12,83 +11,47 @@ from app.models.alert import (
     Alert, Severity, AlertStatus,
     PrometheusWebhook, PagerDutyAlert, AlertCreate
 )
-from app.services.dedup import check_and_mark_duplicate
+from app.services.dedup import check_and_mark_duplicate, clear_fingerprint
 from app.services.routing import route_alert
 from app.security import verify_api_key
+from app.services import timeline as tl
 
 router = APIRouter(prefix="/ingest", tags=["Ingestion"])
 
 
-# ─── Normalizers ────────────────────────────────────────────────────────────
+# ─── Normalizers ─────────────────────────────────────────────────────────────
 
 def normalize_prometheus(webhook: PrometheusWebhook) -> list[AlertCreate]:
-    """
-    Convert Prometheus webhook payload into internal AlertCreate objects.
-    Prometheus sends a list of alerts in one webhook call.
-    """
     alerts = []
-
     for pa in webhook.alerts:
         labels = pa.labels
-
-        # Build a stable fingerprint from sorted labels
-        # Same labels always produce the same fingerprint
         fingerprint = hashlib.md5(
             json.dumps(labels, sort_keys=True).encode()
         ).hexdigest()
-
-        # Prometheus uses "critical/warning/info" — map to SEV1/SEV2/SEV3
         severity_raw = labels.get("severity", "warning").lower()
-        severity_map = {
-            "critical": "SEV1",
-            "warning":  "SEV2",
-            "info":     "SEV3",
-        }
+        severity_map = {"critical": "SEV1", "warning": "SEV2", "info": "SEV3"}
         severity = severity_map.get(severity_raw, "SEV3")
-
         alerts.append(AlertCreate(
             fingerprint=fingerprint,
             source="prometheus",
             severity=severity,
             service=labels.get("job", labels.get("service", "unknown")),
             team=labels.get("team"),
-            title=pa.annotations.get(
-                "summary",
-                labels.get("alertname", "Unknown Alert")
-            ),
+            title=pa.annotations.get("summary", labels.get("alertname", "Unknown Alert")),
             description=pa.annotations.get("description"),
             labels=labels,
         ))
-
     return alerts
 
 
 def normalize_pagerduty(pd: PagerDutyAlert) -> AlertCreate:
-    """
-    Convert PagerDuty event payload into internal AlertCreate object.
-    PagerDuty sends one event per webhook call.
-    """
     payload = pd.payload
-
-    # PagerDuty uses "critical/error/warning/info" — map to SEV1/SEV2/SEV3/SEV4
-    severity_map = {
-        "critical": "SEV1",
-        "error":    "SEV2",
-        "warning":  "SEV3",
-        "info":     "SEV4",
-    }
-    severity = severity_map.get(
-        payload.get("severity", "warning"),
-        "SEV3"
-    )
-
-    # Use PagerDuty's dedup_key if provided, otherwise generate one
+    severity_map = {"critical": "SEV1", "error": "SEV2", "warning": "SEV3", "info": "SEV4"}
+    severity = severity_map.get(payload.get("severity", "warning"), "SEV3")
     fingerprint = pd.dedup_key or hashlib.md5(
         json.dumps(payload, sort_keys=True).encode()
     ).hexdigest()
-
     custom = payload.get("custom_details", {})
-
     return AlertCreate(
         fingerprint=fingerprint,
         source="pagerduty",
@@ -101,27 +64,24 @@ def normalize_pagerduty(pd: PagerDutyAlert) -> AlertCreate:
     )
 
 
-# ─── Core processing ────────────────────────────────────────────────────────
+# ─── Core processing ──────────────────────────────────────────────────────────
 
 async def process_alert(alert_data: AlertCreate, db: AsyncSession) -> Alert:
     """
-    Core pipeline for every alert regardless of source:
-    1. Check for duplicate
+    Core pipeline:
+    1. Dedup check
     2. Save to database
-    3. Route if not duplicate
+    3. Record timeline event
+    4. Route if not duplicate
     """
-
-    # Step 1 — deduplication check
     is_dup = await check_and_mark_duplicate(alert_data.fingerprint)
 
-    # Step 2 — save to database
     try:
         severity = Severity[alert_data.severity]
     except KeyError:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid severity: {alert_data.severity}. "
-                   f"Must be SEV1, SEV2, SEV3, or SEV4."
+            detail=f"Invalid severity: {alert_data.severity}."
         )
 
     alert = Alert(
@@ -141,14 +101,29 @@ async def process_alert(alert_data: AlertCreate, db: AsyncSession) -> Alert:
     await db.commit()
     await db.refresh(alert)
 
-    # Step 3 — route if not a duplicate
+    # Record timeline event
+    if is_dup:
+        await tl.record_deduplicated(db, alert.id, alert_data.fingerprint)
+    else:
+        await tl.record_received(
+            db, alert.id,
+            alert_data.source,
+            alert_data.severity,
+            alert_data.service
+        )
+
     if not is_dup:
         await route_alert(alert, db)
 
     return alert
 
 
-# ─── Endpoints ──────────────────────────────────────────────────────────────
+# ─── Endpoints ───────────────────────────────────────────────────────────────
+
+@router.get("/health")
+async def ingest_health():
+    return {"status": "ok", "service": "ingest"}
+
 
 @router.post("/prometheus")
 async def ingest_prometheus(
@@ -156,12 +131,7 @@ async def ingest_prometheus(
     db: AsyncSession = Depends(get_db),
     _: bool = Depends(verify_api_key)
 ):
-    """
-    Accepts Prometheus Alertmanager webhook format.
-    One webhook call can contain multiple alerts.
-    """
     alerts = normalize_prometheus(webhook)
-
     if not alerts:
         return {"received": 0, "results": []}
 
@@ -178,10 +148,7 @@ async def ingest_prometheus(
             "status": alert.status.value,
         })
 
-    return {
-        "received": len(alerts),
-        "results": results,
-    }
+    return {"received": len(alerts), "results": results}
 
 
 @router.post("/pagerduty")
@@ -190,13 +157,8 @@ async def ingest_pagerduty(
     db: AsyncSession = Depends(get_db),
     _: bool = Depends(verify_api_key)
 ):
-    """
-    Accepts PagerDuty Events API v2 webhook format.
-    One webhook call contains one event.
-    """
     alert_data = normalize_pagerduty(pd)
     alert = await process_alert(alert_data, db)
-
     return {
         "id": str(alert.id),
         "title": alert.title,
@@ -208,49 +170,30 @@ async def ingest_pagerduty(
     }
 
 
-@router.get("/health")
-async def ingest_health():
-    """Quick check that the ingestion service is up."""
-    return {"status": "ok", "service": "ingest"}
-
 @router.post("/prometheus/resolve")
 async def resolve_prometheus(
     webhook: PrometheusWebhook,
     db: AsyncSession = Depends(get_db),
     _: bool = Depends(verify_api_key)
 ):
-    """
-    Handles Prometheus resolved alerts.
-    Marks alerts as resolved in PostgreSQL and clears Redis fingerprint.
-    """
     resolved = []
     not_found = []
 
     for pa in webhook.alerts:
-        # Only process alerts that have actually resolved
         if not pa.endsAt:
             continue
-
-        # Parse endsAt — Prometheus sends it as ISO string
         try:
-            ends_at = datetime.fromisoformat(
-                pa.endsAt.replace("Z", "+00:00")
-            )
+            ends_at = datetime.fromisoformat(pa.endsAt.replace("Z", "+00:00"))
         except ValueError:
             continue
-
-        # Skip if endsAt is in the future — not resolved yet
         if ends_at > datetime.now(timezone.utc):
             continue
 
         labels = pa.labels
-
-        # Build same fingerprint as ingestion
         fingerprint = hashlib.md5(
             json.dumps(labels, sort_keys=True).encode()
         ).hexdigest()
 
-        # Find the most recent active alert with this fingerprint
         result = await db.execute(
             select(Alert)
             .where(Alert.fingerprint == fingerprint)
@@ -261,13 +204,11 @@ async def resolve_prometheus(
         alert = result.scalar_one_or_none()
 
         if alert:
-            # Mark resolved in PostgreSQL
             alert.status = AlertStatus.RESOLVED
             alert.resolved_at = datetime.utcnow()
             await db.commit()
-
-            # Clear Redis fingerprint immediately
             await clear_fingerprint(fingerprint)
+            await tl.record_resolved(db, alert.id)
 
             resolved.append({
                 "id": str(alert.id),

@@ -203,3 +203,51 @@ async def get_alert(alert_id: str, db: AsyncSession = Depends(get_db)):
 async def dashboard_health():
     """Quick check that the dashboard service is up."""
     return {"status": "ok", "service": "dashboard"}
+
+@router.get("/alerts/{alert_id}/timeline")
+async def get_alert_timeline(alert_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Get the full timeline of events for a single alert.
+    Shows every event from detection to resolution.
+    """
+    from app.services.timeline import get_timeline
+
+    # Verify alert exists
+    result = await db.execute(
+        select(Alert).where(Alert.id == alert_id)
+    )
+    alert = result.scalar_one_or_none()
+
+    if not alert:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Alert not found")
+
+    events = await get_timeline(db, alert_id)
+
+    emoji_map = {
+        "received":      "🔴",
+        "deduplicated":  "🔄",
+        "routed":        "📋",
+        "escalated":     "🔔",
+        "notified":      "💬",
+        "acknowledged":  "👀",
+        "resolved":      "✅",
+        "comment":       "💭",
+    }
+
+    return {
+        "alert_id": alert_id,
+        "alert_title": alert.title,
+        "alert_status": alert.status.value,
+        "timeline": [
+            {
+                "id": str(e.id),
+                "event_type": e.event_type.value,
+                "emoji": emoji_map.get(e.event_type.value, "•"),
+                "message": e.message,
+                "details": e.details,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in events
+        ]
+    }
