@@ -18,29 +18,40 @@ if it's worth waking them up.
 
 ---
 
-## How It Works — Pipeline Overview
+# How It Works — Pipeline Overview
 
+```text
 Prometheus or PagerDuty sends a webhook
-↓
-Normalize → convert to internal format (AlertCreate)
-↓
-Fingerprint → MD5 hash of sorted labels
-↓
-Redis check → seen this fingerprint in last 5 min?
-YES → mark as deduplicated, stop here
-NO  → save to PostgreSQL, continue
-↓
-Routing engine → loop rules in priority order, first match wins
-↓
-Escalation → fire or schedule notification based on severity
-↓
-Slack → formatted message with severity, service, team, routed_to
-↓
-Dashboard → live counts and alert list at /ui
+                ↓
+Normalize
+Convert incoming payloads into the internal AlertCreate format
+                ↓
+Fingerprint
+Generate an MD5 hash from sorted alert labels
+                ↓
+Redis Deduplication Check
+Has this fingerprint been seen within the last 5 minutes?
 
-Two sources go in. One normalized pipeline handles both. The source stops mattering after normalization.
+    YES → Mark as deduplicated and stop processing
+    NO  → Save alert to PostgreSQL and continue
+                ↓
+Routing Engine
+Evaluate routing rules in priority order until the first match is found
+                ↓
+Escalation Engine
+Trigger or schedule notifications based on alert severity
+                ↓
+Slack Notification
+Send formatted alert message including:
+- Severity
+- Service
+- Team
+- routed_to
+                ↓
+Dashboard
+Display live alert counts and alert history at /ui
+```
 
----
 
 Two sources go in. One normalized pipeline handles both. The source stops mattering after normalization.
 
