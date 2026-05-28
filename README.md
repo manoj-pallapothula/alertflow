@@ -18,29 +18,40 @@ if it's worth waking them up.
 
 ---
 
-## How It Works — Pipeline Overview
+# How It Works — Pipeline Overview
 
+```text
 Prometheus or PagerDuty sends a webhook
-↓
-Normalize → convert to internal format (AlertCreate)
-↓
-Fingerprint → MD5 hash of sorted labels
-↓
-Redis check → seen this fingerprint in last 5 min?
-YES → mark as deduplicated, stop here
-NO  → save to PostgreSQL, continue
-↓
-Routing engine → loop rules in priority order, first match wins
-↓
-Escalation → fire or schedule notification based on severity
-↓
-Slack → formatted message with severity, service, team, routed_to
-↓
-Dashboard → live counts and alert list at /ui
+                ↓
+Normalize
+Convert incoming payloads into the internal AlertCreate format
+                ↓
+Fingerprint
+Generate an MD5 hash from sorted alert labels
+                ↓
+Redis Deduplication Check
+Has this fingerprint been seen within the last 5 minutes?
 
-Two sources go in. One normalized pipeline handles both. The source stops mattering after normalization.
+    YES → Mark as deduplicated and stop processing
+    NO  → Save alert to PostgreSQL and continue
+                ↓
+Routing Engine
+Evaluate routing rules in priority order until the first match is found
+                ↓
+Escalation Engine
+Trigger or schedule notifications based on alert severity
+                ↓
+Slack Notification
+Send formatted alert message including:
+- Severity
+- Service
+- Team
+- routed_to
+                ↓
+Dashboard
+Display live alert counts and alert history at /ui
+```
 
----
 
 Two sources go in. One normalized pipeline handles both. The source stops mattering after normalization.
 
@@ -168,26 +179,30 @@ Being honest about the limitations:
 
 ---
 
-## Project Structure
+# Project Structure
 
+```text
 app/
-├── main.py               FastAPI app + router registration + static files
-├── config.py             pydantic-settings reads .env
+├── main.py                  # FastAPI app, router registration, and static file serving
+├── config.py                # pydantic-settings configuration loader for .env
 ├── models/
-│   ├── alert.py          Alert table + enums + Pydantic schemas
-│   └── policy.py         EscalationPolicy + RoutingRule tables
+│   ├── alert.py             # Alert database models, enums, and Pydantic schemas
+│   └── policy.py            # EscalationPolicy and RoutingRule database models
 ├── routers/
-│   ├── ingest.py         POST /ingest/prometheus and /ingest/pagerduty
-│   └── dashboard.py      GET /dashboard/summary, /alerts, /alerts/{id}
+│   ├── ingest.py            # POST /ingest/prometheus and /ingest/pagerduty endpoints
+│   └── dashboard.py         # GET /dashboard/summary, /alerts, /alerts/{id} endpoints
 ├── services/
-│   ├── dedup.py          Redis SET NX deduplication
-│   ├── routing.py        Priority rule matching engine
-│   └── escalation.py     Severity-based notification + real Slack webhook
+│   ├── dedup.py             # Redis SET NX alert deduplication logic
+│   ├── routing.py           # Priority-based routing rule matching engine
+│   └── escalation.py        # Severity-based notification handling with Slack webhook integration
 └── db/
-├── database.py       Async engine + session factory
-└── migrations/       Alembic migration files
+    ├── database.py          # Async SQLAlchemy engine and session factory
+    └── migrations/          # Alembic migration files
+
 static/
-└── dashboard.html        Frontend dashboard — served at /ui
+└── dashboard.html           # Frontend dashboard served at /ui
+```
+
 
 ---
 
@@ -230,7 +245,7 @@ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
 ---
 
 ## API Endpoints
-
+```text
 POST /ingest/prometheus          Prometheus Alertmanager webhook
 POST /ingest/pagerduty           PagerDuty Events API v2 webhook
 GET  /dashboard/summary          Counts by status, severity, service + Redis stats
@@ -239,6 +254,7 @@ GET  /dashboard/alerts/{id}      Full alert details including raw labels
 GET  /ui                         Frontend dashboard
 GET  /docs                       Interactive Swagger UI
 GET  /dashboard/alerts/{id}/timeline  Full incident timeline — every event from detection to resolution
+```
 
 ---
 
@@ -268,7 +284,7 @@ StaticFiles was the clean fix — one endpoint, no separate server.
 **Incident timelines need to be wired everywhere.** To track every event, you have to touch every part of the pipeline — ingest, routing, escalation, notification. It's not a feature you can bolt on after the fact. The earlier you add it, the cleaner it is.
 
 ## What's Next
-
+```text
 ✅ Wire up real Slack notifications
 ✅ Build a frontend dashboard
 ✅ Add API key authentication
@@ -276,6 +292,7 @@ StaticFiles was the clean fix — one endpoint, no separate server.
 ✅ Incident timeline — tracks every event per alert with timestamps (received, routed, escalated, notified, resolved)
 [ ] Replace `asyncio.create_task()` with Celery for reliable delayed escalations — skipped intentionally, only relevant for production deployment
 ✅ Write pytest tests
+```
 
 ---
 
