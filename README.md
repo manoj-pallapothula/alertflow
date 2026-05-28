@@ -168,26 +168,30 @@ Being honest about the limitations:
 
 ---
 
-## Project Structure
+# Project Structure
 
+```text
 app/
-├── main.py               FastAPI app + router registration + static files
-├── config.py             pydantic-settings reads .env
+├── main.py                  # FastAPI app, router registration, and static file serving
+├── config.py                # pydantic-settings configuration loader for .env
 ├── models/
-│   ├── alert.py          Alert table + enums + Pydantic schemas
-│   └── policy.py         EscalationPolicy + RoutingRule tables
+│   ├── alert.py             # Alert database models, enums, and Pydantic schemas
+│   └── policy.py            # EscalationPolicy and RoutingRule database models
 ├── routers/
-│   ├── ingest.py         POST /ingest/prometheus and /ingest/pagerduty
-│   └── dashboard.py      GET /dashboard/summary, /alerts, /alerts/{id}
+│   ├── ingest.py            # POST /ingest/prometheus and /ingest/pagerduty endpoints
+│   └── dashboard.py         # GET /dashboard/summary, /alerts, /alerts/{id} endpoints
 ├── services/
-│   ├── dedup.py          Redis SET NX deduplication
-│   ├── routing.py        Priority rule matching engine
-│   └── escalation.py     Severity-based notification + real Slack webhook
+│   ├── dedup.py             # Redis SET NX alert deduplication logic
+│   ├── routing.py           # Priority-based routing rule matching engine
+│   └── escalation.py        # Severity-based notification handling with Slack webhook integration
 └── db/
-├── database.py       Async engine + session factory
-└── migrations/       Alembic migration files
+    ├── database.py          # Async SQLAlchemy engine and session factory
+    └── migrations/          # Alembic migration files
+
 static/
-└── dashboard.html        Frontend dashboard — served at /ui
+└── dashboard.html           # Frontend dashboard served at /ui
+```
+
 
 ---
 
