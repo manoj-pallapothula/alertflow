@@ -245,7 +245,7 @@ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
 ---
 
 ## API Endpoints
-
+```text
 POST /ingest/prometheus          Prometheus Alertmanager webhook
 POST /ingest/pagerduty           PagerDuty Events API v2 webhook
 GET  /dashboard/summary          Counts by status, severity, service + Redis stats
@@ -254,6 +254,7 @@ GET  /dashboard/alerts/{id}      Full alert details including raw labels
 GET  /ui                         Frontend dashboard
 GET  /docs                       Interactive Swagger UI
 GET  /dashboard/alerts/{id}/timeline  Full incident timeline — every event from detection to resolution
+```
 
 ---
 
@@ -283,7 +284,7 @@ StaticFiles was the clean fix — one endpoint, no separate server.
 **Incident timelines need to be wired everywhere.** To track every event, you have to touch every part of the pipeline — ingest, routing, escalation, notification. It's not a feature you can bolt on after the fact. The earlier you add it, the cleaner it is.
 
 ## What's Next
-
+```text
 ✅ Wire up real Slack notifications
 ✅ Build a frontend dashboard
 ✅ Add API key authentication
@@ -291,6 +292,7 @@ StaticFiles was the clean fix — one endpoint, no separate server.
 ✅ Incident timeline — tracks every event per alert with timestamps (received, routed, escalated, notified, resolved)
 [ ] Replace `asyncio.create_task()` with Celery for reliable delayed escalations — skipped intentionally, only relevant for production deployment
 ✅ Write pytest tests
+```
 
 ---
 
